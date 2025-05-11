@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: choremanager
+    name: choresmanager
     runtime: python
     plan: free
     autoDeploy: true
