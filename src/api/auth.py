@@ -14,3 +14,10 @@ async def get_api_key(request: Request, api_key_header: str = Security(api_key_h
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Forbidden"
         )
+
+def get_current_user():
+    """
+    Mock implementation of get_current_user.
+    Replace this with actual authentication logic later.
+    """
+    return {"id": 1, "name": "testuser"}  # Mock user with ID 1
