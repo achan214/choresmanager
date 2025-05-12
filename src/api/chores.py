@@ -14,7 +14,7 @@ router = APIRouter(
 class ChoreCreate(BaseModel):
     group_id: int
     chore_name: str
-    description: str  # required field
+    description: str  
     due_date: datetime
     assignees: list[int]
     recurring: str | None = None
@@ -31,7 +31,7 @@ def create_chore(chore: ChoreCreate):
         raise HTTPException(status_code=400, detail="Chore name, description, and due date are required.")
 
     with db.engine.begin() as conn:
-        # Insert the chore
+        # insert the chore
         result = conn.execute(
             sqlalchemy.text("""
                 INSERT INTO chores (name, description, group_id, due_date, is_recurring, recurrence_pattern, created_by, completed)
@@ -54,7 +54,7 @@ def create_chore(chore: ChoreCreate):
 
         chore_id = result["id"]
 
-        # Assign the chore to users
+        # assign the chores to users
         for user_id in chore.assignees:
             conn.execute(
                 sqlalchemy.text("""
