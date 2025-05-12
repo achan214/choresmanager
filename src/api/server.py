@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from src.api import chores, groups, users, auth, server, admin
+from src.api import chores, groups, users, auth, server, admin, assignments
 from starlette.middleware.cors import CORSMiddleware
 
 description = """
@@ -33,6 +33,9 @@ app.add_middleware(
 
 app.include_router(admin.router)
 app.include_router(groups.router)
+app.include_router(chores.router)
+app.include_router(assignments.router)
+
 
 
 
