@@ -106,3 +106,34 @@ def join_group(group_id: int, invite_code: str):
         id=user_result["id"],
         name=group["name"],  # Return the group's name
     )
+
+@router.get("/{group_id}/chores")
+def get_group_chores(group_id: int):
+    with db.engine.begin() as conn:
+        result = conn.execute(
+            sqlalchemy.text("""
+                SELECT name AS chore_name, completed
+                FROM chores
+                WHERE group_id = :group_id
+            """),
+            {"group_id": group_id}
+        ).mappings().all()
+
+    return list(result)
+
+@router.get("/{group_id}/stats")
+def get_group_stats(group_id: int):
+    with db.engine.begin() as conn:
+        result = conn.execute(
+            sqlalchemy.text("""
+                SELECT u.name, COUNT(*) AS completed_count
+                FROM users u
+                JOIN assignments a ON u.id = a.user_id
+                JOIN chores c ON a.chore_id = c.id
+                WHERE c.group_id = :group_id AND c.completed = true
+                GROUP BY u.name
+            """),
+            {"group_id": group_id}
+        ).mappings().all()
+
+    return {row["name"]: row["completed_count"] for row in result}
