@@ -14,7 +14,7 @@ router = APIRouter(
 
 class Group(BaseModel):
     id: int
-    name: str = Field(..., min_length=1, max_length=50)
+    group_name: str = Field(..., min_length=1, max_length=50)
     invite_code: str = Field(..., min_length=1, max_length=10)
 
 class GroupResponse(BaseModel):
@@ -31,12 +31,12 @@ def create_group(group: Group):
         result = connection.execute(
             sqlalchemy.text(
                 """
-                INSERT INTO groups (name, created_at, invite_code)
+                INSERT INTO groups (group_name, created_at, invite_code)
                 VALUES (:name, NOW(), :invite_code)
-                RETURNING id, name, created_at, invite_code
+                RETURNING id, group_name, created_at, invite_code
                 """
             ),
-            {"name": group.name, "invite_code": group.invite_code},
+            {"name": group.group_name, "invite_code": group.invite_code},
         ).fetchone()
 
         if not result:
@@ -47,12 +47,12 @@ def create_group(group: Group):
 
     return GroupResponse(
         id=result.id,
-        name=result.name,
+        name=result.group_name,
     )
 
 # join a group
 @router.post("/join", response_model=GroupResponse, status_code=status.HTTP_200_OK)
-def join_group(group_id: int, invite_code: str):
+def join_group(group_name: str, invite_code: str, username: str):
     """
     Join a group with the given ID and invite code.
     """
@@ -62,12 +62,12 @@ def join_group(group_id: int, invite_code: str):
         group = connection.execute(
             sqlalchemy.text(
                 """
-                SELECT invite_code, name
+                SELECT invite_code, group_name
                 FROM groups
-                WHERE id = :group_id
+                WHERE group_name = :group_name
                 """
             ),
-            {"group_id": group_id},
+            {"group_name": group_name},
         ).mappings().fetchone()
 
         if not group:
@@ -83,17 +83,45 @@ def join_group(group_id: int, invite_code: str):
                 detail="Invalid invite code",
             )
 
-        # Step 3: Update the user's group_id
+        # Step 3: Update the user's group_id using the group name and username that are unique
+        group_id = connection.execute(
+            sqlalchemy.text(
+                """
+                SELECT id
+                FROM groups
+                WHERE group_name = :group_name
+                """
+            ),
+            {"group_name": group_name},
+        ).scalar()
+        if not group_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Group not found",
+            )
+        
+        user_id = connection.execute(
+            sqlalchemy.text(
+                """
+                SELECT id
+                FROM users
+                WHERE username = :username
+                """
+            ),
+            {"username": username},
+        ).scalar()
+
+        # Update the user's group_id
         user_result = connection.execute(
             sqlalchemy.text(
                 """
                 UPDATE users
                 SET group_id = :group_id
                 WHERE id = :user_id
-                RETURNING id, name
+                RETURNING id, username
                 """
             ),
-            {"group_id": group_id, "user_id": auth.get_current_user()["id"]},
+            {"group_id": group_id, "user_id": user_id},
         ).mappings().fetchone()
 
         if not user_result:
@@ -104,7 +132,7 @@ def join_group(group_id: int, invite_code: str):
 
     return GroupResponse(
         id=user_result["id"],
-        name=group["name"],  # Return the group's name
+        name=group["group_name"],  # Return the group's name
     )
 
 @router.get("/{group_id}/chores")
@@ -126,12 +154,12 @@ def get_group_stats(group_id: int):
     with db.engine.begin() as conn:
         result = conn.execute(
             sqlalchemy.text("""
-                SELECT u.name, COUNT(*) AS completed_count
+                SELECT u.username, COUNT(*) AS completed_count
                 FROM users u
                 JOIN assignments a ON u.id = a.user_id
                 JOIN chores c ON a.chore_id = c.id
                 WHERE c.group_id = :group_id AND c.completed = true
-                GROUP BY u.name
+                GROUP BY u.username
             """),
             {"group_id": group_id}
         ).mappings().all()
