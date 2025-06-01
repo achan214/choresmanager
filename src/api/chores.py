@@ -1,11 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status 
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Body
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timedelta
 import sqlalchemy
 from src import database as db
 from src.api import auth
-from fastapi import Body
-from datetime import timedelta
 
 router = APIRouter(
     prefix="/chores",
@@ -25,15 +23,24 @@ class ChoreCreatedResponse(BaseModel):
     chore_id: int
     message: str
 
+# create a new chore and assign to users
 @router.post("/", response_model=ChoreCreatedResponse, status_code=status.HTTP_201_CREATED)
-def create_chore(chore: ChoreCreate):
-    user = auth.get_current_user()
-
+def create_chore(chore: ChoreCreate, user=Depends(auth.get_current_user)):
     if not chore.chore_name or not chore.due_date or not chore.description:
-        raise HTTPException(status_code=400, detail="Chore name, description, and due date are required.")
+        raise HTTPException(status_code=400, detail="chore name, description, and due date are required")
+
+    if not chore.assignees:
+        raise HTTPException(status_code=400, detail="at least one assignee must be specified")
 
     with db.engine.begin() as conn:
-        # insert the chore
+        group_check = conn.execute(
+            sqlalchemy.text("SELECT group_id FROM users WHERE id = :user_id"),
+            {"user_id": user["id"]}
+        ).scalar()
+
+        if group_check != chore.group_id:
+            raise HTTPException(status_code=403, detail="you can't assign chores to this group")
+
         result = conn.execute(
             sqlalchemy.text("""
                 INSERT INTO chores (name, description, group_id, due_date, is_recurring, recurrence_pattern, created_by, completed)
@@ -51,12 +58,8 @@ def create_chore(chore: ChoreCreate):
             }
         ).mappings().fetchone()
 
-        if not result:
-            raise HTTPException(status_code=500, detail="Failed to create chore.")
-
         chore_id = result["id"]
 
-        # assign the chores to users
         for user_id in chore.assignees:
             conn.execute(
                 sqlalchemy.text("""
@@ -70,8 +73,9 @@ def create_chore(chore: ChoreCreate):
                 }
             )
 
-    return {"chore_id": chore_id, "message": "Chore created."}
+    return {"chore_id": chore_id, "message": "chore created"}
 
+# mark a chore as complete
 @router.patch("/{chore_id}/complete")
 def mark_chore_complete(chore_id: int):
     with db.engine.begin() as conn:
@@ -86,16 +90,14 @@ def mark_chore_complete(chore_id: int):
         ).fetchone()
 
         if not result:
-            raise HTTPException(status_code=404, detail="Chore not found.")
+            raise HTTPException(status_code=404, detail="chore not found")
 
-    return {"message": "Chore marked as complete."}
+    return {"message": "chore marked as complete"}
 
+# assign chore to least-busy users
 @router.post("/assign-balanced")
-def assign_chore_balanced(chore: ChoreCreate):
-    user = auth.get_current_user()
-
+def assign_chore_balanced(chore: ChoreCreate, user=Depends(auth.get_current_user)):
     with db.engine.begin() as conn:
-        # Get group members and chore counts
         members = conn.execute(sqlalchemy.text("""
             SELECT u.id, COUNT(a.chore_id) as chore_count
             FROM users u
@@ -107,9 +109,8 @@ def assign_chore_balanced(chore: ChoreCreate):
         """), {"group_id": chore.group_id}).mappings().all()
 
         if not members:
-            raise HTTPException(status_code=404, detail="No users found in group.")
+            raise HTTPException(status_code=404, detail="no users found in group")
 
-        # Choose N least busy members (or all if fewer than requested)
         selected = [m["id"] for m in members[:len(chore.assignees)]]
 
         result = conn.execute(sqlalchemy.text("""
@@ -126,9 +127,6 @@ def assign_chore_balanced(chore: ChoreCreate):
             "created_by": user["id"]
         }).mappings().fetchone()
 
-        if not result:
-            raise HTTPException(status_code=500, detail="Failed to create chore.")
-
         chore_id = result["id"]
 
         for uid in selected:
@@ -137,8 +135,9 @@ def assign_chore_balanced(chore: ChoreCreate):
                 VALUES (:chore_id, :user_id, NOW())
             """), {"chore_id": chore_id, "user_id": uid})
 
-    return {"chore_id": chore_id, "assigned_to": selected, "message": "Chore assigned fairly."}
+    return {"chore_id": chore_id, "assigned_to": selected, "message": "chore assigned fairly"}
 
+# send reminders for upcoming chores
 @router.post("/reminders/send")
 def send_reminders(group_id: int = Body(...), timeframe_hours: int = Body(default=48)):
     now = datetime.now()
@@ -154,15 +153,14 @@ def send_reminders(group_id: int = Body(...), timeframe_hours: int = Body(defaul
         """), {"group_id": group_id, "now": now, "deadline": deadline}).mappings().all()
 
         if not results:
-            return {"message": "No upcoming chores found."}
+            return {"message": "no upcoming chores found"}
 
         reminders_sent = []
         for r in results:
             reminders_sent.append({
                 "user_id": r["user_id"],
                 "chore_id": r["chore_id"],
-                "message": f"Reminder: '{r['name']}' is due by {r['due_date']}"
+                "message": f"reminder: '{r['name']}' is due by {r['due_date']}"
             })
 
         return {"reminders_sent": reminders_sent}
-

@@ -9,17 +9,21 @@ router = APIRouter(
     dependencies=[Depends(auth.get_api_key)],
 )
 
-# create a user
+# create a new user and check for duplicate email
 @router.post("/", status_code=201)
 def create_user(username: str, email: str):
-    """
-    Create a new user with the given username.
-    """
-    if not username:
-        raise HTTPException(status_code=400, detail="Username is required.")
+    if not username or not email:
+        raise HTTPException(status_code=400, detail="Username and email are required.")
 
     with db.engine.begin() as conn:
-        # id, username, email, is_admin
+        duplicate = conn.execute(
+            sqlalchemy.text("SELECT id FROM users WHERE email = :email"),
+            {"email": email}
+        ).first()
+
+        if duplicate:
+            raise HTTPException(status_code=409, detail="Email already in use.")
+
         result = conn.execute(
             sqlalchemy.text("""
                 INSERT INTO users (username, email, is_admin)
@@ -29,18 +33,20 @@ def create_user(username: str, email: str):
             {"username": username, "email": email}
         ).mappings().fetchone()
 
-    if not result:
-        raise HTTPException(status_code=500, detail="Failed to create user.")
-
     return {"user_id": result["id"], "message": "User created successfully."}
 
+# get all chores assigned to a user if the user exists
 @router.get("/{user_id}/chores")
 def get_user_chores(user_id: int):
-    """
-    Get all chores assigned to a specific user.
-    Returns the chore name and due date.
-    """
     with db.engine.begin() as conn:
+        user_exists = conn.execute(
+            sqlalchemy.text("SELECT 1 FROM users WHERE id = :user_id"),
+            {"user_id": user_id}
+        ).first()
+
+        if not user_exists:
+            raise HTTPException(status_code=404, detail="User not found.")
+
         results = conn.execute(
             sqlalchemy.text("""
                 SELECT c.name AS chore_name, c.due_date
@@ -51,7 +57,4 @@ def get_user_chores(user_id: int):
             {"user_id": user_id}
         ).mappings().all()
 
-    if not results:
-        return []  # Optionally, return a message like: {"message": "No chores assigned."}
-
-    return list(results)
+    return list(results) if results else {"message": "No chores assigned."}
