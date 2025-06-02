@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Optional
 import sqlalchemy
 from src import database as db
 from src.api import auth
@@ -35,9 +36,14 @@ def create_user(username: str, email: str):
 
     return {"user_id": result["id"], "message": "User created successfully."}
 
-# get all chores assigned to a user if the user exists
+
+# get all chores assigned to a user if the user exists, with optional completion filter
 @router.get("/{user_id}/chores")
-def get_user_chores(user_id: int):
+def get_user_chores(
+    user_id: int,
+    completed: Optional[bool] = Query(None),
+    sort_by_due: Optional[str] = Query(None, regex="^(asc|desc)?$")
+):
     with db.engine.begin() as conn:
         user_exists = conn.execute(
             sqlalchemy.text("SELECT 1 FROM users WHERE id = :user_id"),
@@ -47,14 +53,21 @@ def get_user_chores(user_id: int):
         if not user_exists:
             raise HTTPException(status_code=404, detail="User not found.")
 
-        results = conn.execute(
-            sqlalchemy.text("""
-                SELECT c.name AS chore_name, c.due_date
-                FROM chores c
-                JOIN assignments a ON c.id = a.chore_id
-                WHERE a.user_id = :user_id
-            """),
-            {"user_id": user_id}
-        ).mappings().all()
+        query = """
+            SELECT c.name AS chore_name, c.due_date, c.completed
+            FROM chores c
+            JOIN assignments a ON c.id = a.chore_id
+            WHERE a.user_id = :user_id
+        """
+        params = {"user_id": user_id}
+
+        if completed is not None:
+            query += " AND c.completed = :completed"
+            params["completed"] = completed
+
+        if sort_by_due:
+            query += f" ORDER BY c.due_date {sort_by_due.upper()}"
+
+        results = conn.execute(sqlalchemy.text(query), params).mappings().all()
 
     return list(results) if results else {"message": "No chores assigned."}

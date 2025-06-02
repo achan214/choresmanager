@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import sqlalchemy
 from src import database as db
 from src.api import auth
+from src.api.assignments import assign_users_to_chore
+
 
 router = APIRouter(
     prefix="/chores",
@@ -43,8 +45,8 @@ def create_chore(chore: ChoreCreate, user=Depends(auth.get_current_user)):
 
         result = conn.execute(
             sqlalchemy.text("""
-                INSERT INTO chores (name, description, group_id, due_date, is_recurring, recurrence_pattern, created_by, completed)
-                VALUES (:name, :description, :group_id, :due_date, :is_recurring, :recurrence_pattern, :created_by, false)
+                INSERT INTO chores (name, description, group_id, due_date, is_recurring, recurrence_pattern, created_by, completed, created_at)
+                VALUES (:name, :description, :group_id, :due_date, :is_recurring, :recurrence_pattern, :created_by, false, NOW())
                 RETURNING id
             """),
             {
@@ -60,37 +62,55 @@ def create_chore(chore: ChoreCreate, user=Depends(auth.get_current_user)):
 
         chore_id = result["id"]
 
-        for user_id in chore.assignees:
-            conn.execute(
-                sqlalchemy.text("""
-                    INSERT INTO assignments (chore_id, user_id, assigned_at)
-                    VALUES (:chore_id, :user_id, :assigned_at)
-                """),
-                {
-                    "chore_id": chore_id,
-                    "user_id": user_id,
-                    "assigned_at": datetime.now()
-                }
-            )
+        assign_users_to_chore(conn, chore_id, chore.assignees)
+
 
     return {"chore_id": chore_id, "message": "chore created"}
 
 # mark a chore as complete
 @router.patch("/{chore_id}/complete")
-def mark_chore_complete(chore_id: int):
+def mark_chore_complete(chore_id: int, user=Depends(auth.get_current_user)):
+    """
+    Mark a chore as complete, recording who completed it and when.
+    """
     with db.engine.begin() as conn:
+        # Ensure the user is assigned to this chore
+        assigned = conn.execute(
+            sqlalchemy.text("""
+                SELECT 1 FROM assignments
+                WHERE chore_id = :chore_id AND user_id = :user_id
+            """),
+            {"chore_id": chore_id, "user_id": user["id"]}
+        ).first()
+
+        if not assigned:
+            raise HTTPException(status_code=403, detail="You are not assigned to this chore.")
+
+        # Update the chores table
         result = conn.execute(
             sqlalchemy.text("""
                 UPDATE chores
-                SET completed = true
+                SET completed = true,
+                    completed_by = :user_id,
+                    completed_at = NOW()
                 WHERE id = :chore_id
                 RETURNING id
             """),
-            {"chore_id": chore_id}
+            {"chore_id": chore_id, "user_id": user["id"]}
         ).fetchone()
 
         if not result:
             raise HTTPException(status_code=404, detail="chore not found")
+
+        # Update the assignments table
+        conn.execute(
+            sqlalchemy.text("""
+                UPDATE assignments
+                SET completed_by = :user_id
+                WHERE chore_id = :chore_id AND user_id = :user_id
+            """),
+            {"chore_id": chore_id, "user_id": user["id"]}
+        )
 
     return {"message": "chore marked as complete"}
 
@@ -102,7 +122,7 @@ def assign_chore_balanced(chore: ChoreCreate, user=Depends(auth.get_current_user
             SELECT u.id, COUNT(a.chore_id) as chore_count
             FROM users u
             LEFT JOIN assignments a ON u.id = a.user_id
-            LEFT JOIN chores c ON a.chore_id = c.id AND c.completed = false
+            LEFT JOIN chores c ON a.chore_id = c.id AND c.completed = false AND c.archived = false
             WHERE u.group_id = :group_id
             GROUP BY u.id
             ORDER BY chore_count ASC
@@ -114,8 +134,8 @@ def assign_chore_balanced(chore: ChoreCreate, user=Depends(auth.get_current_user
         selected = [m["id"] for m in members[:len(chore.assignees)]]
 
         result = conn.execute(sqlalchemy.text("""
-            INSERT INTO chores (name, description, group_id, due_date, is_recurring, recurrence_pattern, created_by, completed)
-            VALUES (:name, :description, :group_id, :due_date, :is_recurring, :recurrence_pattern, :created_by, false)
+            INSERT INTO chores (name, description, group_id, due_date, is_recurring, recurrence_pattern, created_by, completed, created_at)
+            VALUES (:name, :description, :group_id, :due_date, :is_recurring, :recurrence_pattern, :created_by, false, NOW())
             RETURNING id
         """), {
             "name": chore.chore_name,
@@ -129,11 +149,8 @@ def assign_chore_balanced(chore: ChoreCreate, user=Depends(auth.get_current_user
 
         chore_id = result["id"]
 
-        for uid in selected:
-            conn.execute(sqlalchemy.text("""
-                INSERT INTO assignments (chore_id, user_id, assigned_at)
-                VALUES (:chore_id, :user_id, NOW())
-            """), {"chore_id": chore_id, "user_id": uid})
+        assign_users_to_chore(conn, chore_id, selected)
+
 
     return {"chore_id": chore_id, "assigned_to": selected, "message": "chore assigned fairly"}
 
@@ -149,7 +166,7 @@ def send_reminders(group_id: int = Body(...), timeframe_hours: int = Body(defaul
             FROM chores c
             JOIN assignments a ON c.id = a.chore_id
             JOIN users u ON a.user_id = u.id
-            WHERE c.group_id = :group_id AND c.completed = false AND c.due_date BETWEEN :now AND :deadline
+            WHERE c.group_id = :group_id AND c.completed = false AND c.archived = false AND c.due_date BETWEEN :now AND :deadline
         """), {"group_id": group_id, "now": now, "deadline": deadline}).mappings().all()
 
         if not results:
@@ -164,3 +181,89 @@ def send_reminders(group_id: int = Body(...), timeframe_hours: int = Body(defaul
             })
 
         return {"reminders_sent": reminders_sent}
+    
+@router.patch("/{chore_id}/archive")
+def archive_chore(chore_id: int, user=Depends(auth.get_current_user)):
+    """
+    Soft-delete a chore by marking it as archived.
+    """
+    with db.engine.begin() as conn:
+        result = conn.execute(
+            sqlalchemy.text("""
+                UPDATE chores
+                SET archived = true
+                WHERE id = :chore_id
+                RETURNING id
+            """),
+            {"chore_id": chore_id}
+        ).fetchone()
+
+        if not result:
+            raise HTTPException(status_code=404, detail="chore not found")
+
+    return {"message": "chore archived"}
+
+class ChoreDuplicateRequest(BaseModel):
+    new_due_date: Optional[datetime] = None
+    assignees: Optional[list[int]] = None
+    recurring: Optional[str] = None
+
+@router.post("/{chore_id}/duplicate", response_model=ChoreCreatedResponse)
+def duplicate_chore(
+    chore_id: int,
+    request: ChoreDuplicateRequest,
+    user=Depends(auth.get_current_user)
+):
+    with db.engine.begin() as conn:
+        # Get original chore
+        chore = conn.execute(sqlalchemy.text("""
+            SELECT * FROM chores WHERE id = :id
+        """), {"id": chore_id}).mappings().fetchone()
+
+        if not chore:
+            raise HTTPException(status_code=404, detail="Original chore not found")
+
+        # Verify user is in the same group
+        group_check = conn.execute(
+            sqlalchemy.text("SELECT group_id FROM users WHERE id = :user_id"),
+            {"user_id": user["id"]}
+        ).scalar()
+
+        if group_check != chore["group_id"]:
+            raise HTTPException(status_code=403, detail="Not authorized to duplicate this chore")
+
+        # Create new chore using original values or overrides
+        new_due_date = request.new_due_date or chore["due_date"]
+        new_recurrence = request.recurring if request.recurring is not None else chore["recurrence_pattern"]
+
+        result = conn.execute(sqlalchemy.text("""
+            INSERT INTO chores (name, description, group_id, due_date, is_recurring, recurrence_pattern, created_by, completed, created_at)
+            VALUES (:name, :description, :group_id, :due_date, :is_recurring, :recurrence_pattern, :created_by, false, NOW())
+            RETURNING id
+        """), {
+            "name": chore["name"],
+            "description": chore["description"],
+            "group_id": chore["group_id"],
+            "due_date": new_due_date,
+            "is_recurring": new_recurrence is not None,
+            "recurrence_pattern": new_recurrence,
+            "created_by": user["id"]
+        }).mappings().fetchone()
+
+        new_chore_id = result["id"]
+
+        # Determine assignees: use provided or reuse previous ones
+        if request.assignees:
+            assignees = request.assignees
+        else:
+            assignees = conn.execute(sqlalchemy.text("""
+                SELECT user_id FROM assignments WHERE chore_id = :chore_id
+            """), {"chore_id": chore_id}).scalars().all()
+
+        if not assignees:
+            raise HTTPException(status_code=400, detail="No assignees provided or found on original chore")
+
+        assign_users_to_chore(conn, new_chore_id, assignees)
+
+    return {"chore_id": new_chore_id, "message": "Chore duplicated successfully"}
+
