@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import Optional
+from typing import Optional, List, Union
 import sqlalchemy
+from pydantic import BaseModel
 from src import database as db
 from src.api import auth
 
@@ -10,22 +11,43 @@ router = APIRouter(
     dependencies=[Depends(auth.get_api_key)],
 )
 
-# create a new user and check for duplicate email
-@router.post("/", status_code=201)
+class CreateUserResponse(BaseModel):
+    user_id: int
+    message: str
+
+class ChoreInfo(BaseModel):
+    chore_name: str
+    due_date: Optional[str]
+    completed: bool
+
+class NoChoresResponse(BaseModel):
+    message: str
+
+@router.post("/", response_model=CreateUserResponse, status_code=201)
 def create_user(username: str, email: str):
+    """
+    Create a new user if the email is not already taken.
+
+    Returns:
+        user_id: int - ID of the created user
+        message: str - Success confirmation
+    Raises:
+        400 - if username or email is missing
+        409 - if email is already in use
+    """
     if not username or not email:
         raise HTTPException(status_code=400, detail="Username and email are required.")
 
-    with db.engine.begin() as conn:
-        duplicate = conn.execute(
+    with db.engine.begin() as connection:
+        existing_user = connection.execute(
             sqlalchemy.text("SELECT id FROM users WHERE email = :email"),
             {"email": email}
         ).first()
 
-        if duplicate:
+        if existing_user:
             raise HTTPException(status_code=409, detail="Email already in use.")
 
-        result = conn.execute(
+        result = connection.execute(
             sqlalchemy.text("""
                 INSERT INTO users (username, email, is_admin)
                 VALUES (:username, :email, false)
@@ -34,18 +56,24 @@ def create_user(username: str, email: str):
             {"username": username, "email": email}
         ).mappings().fetchone()
 
-    return {"user_id": result["id"], "message": "User created successfully."}
+    return CreateUserResponse(user_id=result["id"], message="User created successfully.")
 
-
-# get all chores assigned to a user if the user exists, with optional completion filter
-@router.get("/{user_id}/chores")
+@router.get("/{user_id}/chores", response_model=Union[List[ChoreInfo], NoChoresResponse])
 def get_user_chores(
     user_id: int,
     completed: Optional[bool] = Query(None),
-    sort_by_due: Optional[str] = Query(None, regex="^(asc|desc)?$")
+    sort_by_due: Optional[str] = Query(None, pattern="^(asc|desc)?$")
 ):
-    with db.engine.begin() as conn:
-        user_exists = conn.execute(
+    """
+    Get all chores assigned to a specific user.
+    Returns the chore name and due date.
+
+    Supports filtering by:
+        - completion status (`completed`)
+        - sorting by due date (`asc` or `desc`)
+    """
+    with db.engine.begin() as connection:
+        user_exists = connection.execute(
             sqlalchemy.text("SELECT 1 FROM users WHERE id = :user_id"),
             {"user_id": user_id}
         ).first()
@@ -68,6 +96,8 @@ def get_user_chores(
         if sort_by_due:
             query += f" ORDER BY c.due_date {sort_by_due.upper()}"
 
-        results = conn.execute(sqlalchemy.text(query), params).mappings().all()
+        chores = connection.execute(sqlalchemy.text(query), params).mappings().all()
 
-    return list(results) if results else {"message": "No chores assigned."}
+    if chores:
+        return [ChoreInfo(**row) for row in chores]
+    return NoChoresResponse(message="No chores assigned.")
