@@ -20,4 +20,5 @@ def reset():
         connection.execute(sqlalchemy.text(
             "TRUNCATE TABLE assignments, chores, users, groups RESTART IDENTITY CASCADE"
         ))
+        
 
