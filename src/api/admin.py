@@ -32,6 +32,7 @@ def reset_database(request: Request):
         connection.execute(sqlalchemy.text(
             "TRUNCATE TABLE assignments, chores, users, groups RESTART IDENTITY CASCADE"
         ))
+        
 
 
 @router.delete("/remove_user/{user_id}", status_code=200)
