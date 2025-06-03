@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from src.api import chores, groups, users, auth, server, admin, assignments
+from src.api import chores, groups, users, auth, admin, assignments
 from starlette.middleware.cors import CORSMiddleware
 
 description = """
