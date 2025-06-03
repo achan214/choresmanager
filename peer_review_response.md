@@ -96,3 +96,99 @@ This document outlines how each comment from the peer review has been addressed,
 
 ### **3. Assign chore to least busy users**
 - **Not added (justified)**: Already implemented in `/chores/assign-balanced`, which selects users with fewest active chores.
+
+---
+
+## Code Review comments (Kyle Lin)
+
+- Fixed typos and expanded README with database details.
+- Added API specification and example flows to docs.
+- Added comments on class properties for clarity (e.g., `recurring`).
+- Added missing docstrings for better readability.
+- Added user creation endpoint (POST `/users`).
+- Improved variable names for clarity (`conn` → `connection`).
+- Enhanced response details on chore/user creation (include user_id).
+- Returned message when no chores found instead of empty list.
+- Added error handling for redundant group joins.
+- Added validation in `create_chore` to reject empty assignees list.
+- Enforced user-group membership check in `create_chore`.
+- Added instructions for running endpoints in the repo.
+
+---
+
+## Test Results (Kyle Lin)
+
+- Prod website was not working; unable to test.
+- No example flows available.
+
+---
+
+## Schema/API Design Comments (Kyle Lin)
+
+- Marked redundancy in `completed` field in chores and `completed_by_user` in assignments; recommend consolidating.
+- Added `created_by_user_id` field in groups to support authorization.
+- Suggested archived chores and users tables to maintain history.
+- Enforced uniqueness on invite codes.
+- Added timestamps for assignment/chore completion.
+- Suggested notifications table to remind users about chores.
+- Proposed `ChoreTemplate` table for recurring chores.
+- Added tags for chores (e.g., "urgent", "cleaning").
+- Added chore archiving feature.
+- Added endpoint to list all assignees for a chore.
+- Added chore reassignment endpoint.
+- Enforced uniqueness constraints on emails.
+
+---
+
+## Product Ideas (Kyle Lin)
+
+- Notifications table to remind users about chores with various flags (assigned, due soon, etc.).
+- Recurring chores table to manage common repeated chores like dishwashing or vacuuming.
+
+---
+
+## Code Review (Kyle Fan)
+
+- Added user creation endpoint to create DB entries for new users.
+- Updated `auth.py` to query user info from DB rather than placeholders.
+- Added error for missing user in `get_current_user` rather than failing silently.
+- Added consistent docstrings to all functions.
+- Added endpoints in `assignments.py` for creating and completing assignments.
+- Suggested tests for error and success cases.
+- Added `completed_at` update in `mark_chore_complete`.
+- Secured `create_group`, `join_group`, and `mark_chore_complete` endpoints with authentication.
+- Added stub admin endpoint for elevated DB changes.
+- Fixed Alembic migrations to use `server_default` instead of plain `default`.
+- Improved `get_group_stats` aggregation query grouping by user ID and ordering results.
+
+---
+
+## Test Results (Kyle Fan)
+
+- Unable to test:
+  - Creating user with duplicate email returns 409 error.
+  - Marking others' assignments complete returns 403 error.
+  - Viewing stats of other groups returns 403 error.
+
+---
+
+## Schema/API Design (Kyle Fan)
+
+- Proposed `Reminders` and `Reminders_Sent` tables for chore due reminders.
+- Suggested many-to-many `Group_Members` table for multiple group memberships.
+- Noted missing autoincrement on `chore_id` and user IDs; suggested UUIDs or serial IDs.
+- Added `created_at` timestamps with server defaults.
+- Added completion timestamps to assignments.
+- Enforced email uniqueness.
+- Suggested hashing invite codes for uniqueness and collision avoidance.
+- Highlighted permission checks for chore completion by other users.
+- Proposed leave group function with checks.
+- Added group admin and creator fields for membership control.
+- Suggested system admin roles for broad management.
+
+---
+
+## Product Ideas (Kyle Fan)
+
+- Implemented reminders workflow with recurrence patterns.
+- Suggested separate recurrence pattern table shared by reminders and chores.
