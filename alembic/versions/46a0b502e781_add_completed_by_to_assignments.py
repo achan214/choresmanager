@@ -20,13 +20,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    op.add_column("assignments", sa.Column("completed_by", sa.Integer(), nullable=True))
-    op.create_foreign_key(
-        "fk_assignments_completed_by_users", "assignments", "users", ["completed_by"], ["id"]
-    )
+    # op.add_column("assignments", sa.Column("completed_by", sa.Integer(), nullable=True))
+    # op.create_foreign_key(
+    #     "fk_assignments_completed_by_users", "assignments", "users", ["completed_by"], ["id"]
+    # )
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_constraint("fk_assignments_completed_by_users", "assignments", type_="foreignkey")
-    op.drop_column("assignments", "completed_by")
+    # op.drop_constraint("fk_assignments_completed_by_users", "assignments", type_="foreignkey")
+    # op.drop_column("assignments", "completed_by")
 
