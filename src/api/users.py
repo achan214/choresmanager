@@ -4,6 +4,7 @@ import sqlalchemy
 from pydantic import BaseModel
 from src import database as db
 from src.api import auth
+from datetime import datetime
 
 router = APIRouter(
     prefix="/users",
@@ -17,7 +18,7 @@ class CreateUserResponse(BaseModel):
 
 class ChoreInfo(BaseModel):
     chore_name: str
-    due_date: Optional[str]
+    due_date: Optional[datetime]
     completed: bool
 
 class NoChoresResponse(BaseModel):

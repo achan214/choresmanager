@@ -30,7 +30,6 @@ def create_assignment(
 ):
     """
     Create a new assignment by linking a user to a chore.
-    Checks that the chore and user both exist.
     """
     with db.engine.begin() as conn:
         # Ensure chore exists
@@ -49,11 +48,11 @@ def create_assignment(
         if not user_exists:
             raise HTTPException(status_code=404, detail="User not found.")
 
-        # Create assignment
+        # Create assignment with assigned_at
         result = conn.execute(
             sqlalchemy.text("""
-                INSERT INTO assignments (chore_id, user_id, completed, completed_at)
-                VALUES (:chore_id, :user_id, false, NULL)
+                INSERT INTO assignments (chore_id, user_id, assigned_at)
+                VALUES (:chore_id, :user_id, NOW())
                 RETURNING id
             """),
             {"chore_id": assignment.chore_id, "user_id": assignment.user_id}
@@ -70,38 +69,18 @@ def mark_assignment_complete(
     api_key: str = Depends(auth.get_api_key)
 ):
     """
-    Mark a specific assignment as complete.
-    Sets the `completed` flag and updates the `completed_at` timestamp.
+    Acknowledge assignment completion — placeholder for systems without `completed_at`.
     """
-    with db.engine.begin() as conn:
-        assignment = conn.execute(
-            sqlalchemy.text("SELECT id FROM assignments WHERE id = :id"),
-            {"id": assignment_id}
-        ).first()
-
-        if not assignment:
-            raise HTTPException(status_code=404, detail="Assignment not found.")
-
-        now = datetime.utcnow().isoformat()
-
-        conn.execute(
-            sqlalchemy.text("""
-                UPDATE assignments
-                SET completed = true,
-                    completed_at = :completed_at
-                WHERE id = :id
-            """),
-            {"id": assignment_id, "completed_at": now}
-        )
+    now = datetime.utcnow().isoformat()
 
     return CompleteAssignmentResponse(
-        message="Assignment marked as complete.",
+        message="This database does not support assignment completion tracking.",
         completed_at=now
     )
+
 def assign_users_to_chore(conn, chore_id: int, assignee_ids: list[int]):
     """
     Helper function to assign multiple users to a chore.
-    Used internally by the chores module.
     """
     for user_id in assignee_ids:
         conn.execute(
