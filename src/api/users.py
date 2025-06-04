@@ -61,9 +61,8 @@ def create_user(username: str, email: str):
 
 @router.get("/{user_id}/chores", response_model=Union[List[ChoreInfo], NoChoresResponse])
 def get_user_chores(
-    user_id: int,
-    completed: Optional[bool] = Query(None),
-    sort_by_due: Optional[str] = Query(None, pattern="^(asc|desc)?$")
+    username: str,
+    completed: Optional[bool] = Query(None)
 ):
     """
     Get all chores assigned to a specific user.
@@ -71,9 +70,12 @@ def get_user_chores(
 
     Supports filtering by:
         - completion status (`completed`)
-        - sorting by due date (`asc` or `desc`)
     """
     with db.engine.begin() as connection:
+        user_id = connection.execute(
+            sqlalchemy.text("SELECT id FROM users WHERE username = :username"),
+            {"username": username}
+        ).scalar()
         user_exists = connection.execute(
             sqlalchemy.text("SELECT 1 FROM users WHERE id = :user_id"),
             {"user_id": user_id}
@@ -93,9 +95,6 @@ def get_user_chores(
         if completed is not None:
             query += " AND c.completed = :completed"
             params["completed"] = completed
-
-        if sort_by_due:
-            query += f" ORDER BY c.due_date {sort_by_due.upper()}"
 
         chores = connection.execute(sqlalchemy.text(query), params).mappings().all()
 

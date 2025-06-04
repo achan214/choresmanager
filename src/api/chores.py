@@ -15,6 +15,7 @@ router = APIRouter(
 )
 
 class ChoreCreate(BaseModel):
+    username: str
     group_name: str
     chore_name: str
     description: str  
@@ -29,7 +30,6 @@ class ChoreCreatedResponse(BaseModel):
 @router.post("/", response_model=ChoreCreatedResponse, status_code=status.HTTP_201_CREATED)
 def create_chore(
     chore: ChoreCreate,
-    username: str = Depends(auth.get_username)
 ):
     if not chore.chore_name or not chore.due_date or not chore.description:
         raise HTTPException(status_code=400, detail="chore name, description, and due date are required")
@@ -40,7 +40,7 @@ def create_chore(
     with db.engine.begin() as conn:
         user_id = conn.execute(
             sqlalchemy.text("SELECT id FROM users WHERE username = :username"),
-            {"username": username}
+            {"username": chore.username}
         ).scalar()
 
         if not user_id:
@@ -89,7 +89,7 @@ def create_chore(
 
 
 @router.post("/assign-balanced")
-def assign_chore_balanced(chore: ChoreCreate, user=Depends(auth.get_current_user)):
+def assign_chore_balanced(chore: ChoreCreate):
     with db.engine.begin() as conn:
         group_id = conn.execute(
             sqlalchemy.text("SELECT id FROM groups WHERE group_name = :group_name"),
@@ -114,6 +114,15 @@ def assign_chore_balanced(chore: ChoreCreate, user=Depends(auth.get_current_user
 
         selected = [m["id"] for m in members[:len(chore.assignees)]]
 
+
+        user_id = conn.execute(
+            sqlalchemy.text("SELECT id FROM users WHERE username = :username"),
+            {"username": chore.username}
+        ).scalar()
+
+        if not user_id:
+            raise HTTPException(status_code=404, detail="User not found")
+
         result = conn.execute(sqlalchemy.text("""
             INSERT INTO chores (name, description, group_id, due_date, is_recurring, recurrence_pattern, created_by, completed, created_at)
             VALUES (:name, :description, :group_id, :due_date, :is_recurring, :recurrence_pattern, :created_by, false, NOW())
@@ -125,7 +134,7 @@ def assign_chore_balanced(chore: ChoreCreate, user=Depends(auth.get_current_user
             "due_date": chore.due_date,
             "is_recurring": chore.recurring is not None,
             "recurrence_pattern": chore.recurring,
-            "created_by": user["id"]
+            "created_by": user_id
         }).mappings().fetchone()
 
         chore_id = result["id"]
@@ -197,7 +206,7 @@ class ChoreDuplicateRequest(BaseModel):
 def duplicate_chore(
     chore_id: int,
     request: ChoreDuplicateRequest,
-    user=Depends(auth.get_current_user)
+    username: str
 ):
     with db.engine.begin() as conn:
         chore = conn.execute(sqlalchemy.text("""
@@ -207,9 +216,14 @@ def duplicate_chore(
         if not chore:
             raise HTTPException(status_code=404, detail="Original chore not found")
 
+        user_id = conn.execute(
+            sqlalchemy.text("SELECT id FROM users WHERE username = :username"),
+            {"username": username}
+        ).scalar()
+
         group_check = conn.execute(
             sqlalchemy.text("SELECT group_id FROM users WHERE id = :user_id"),
-            {"user_id": user["id"]}
+            {"user_id": user_id}
         ).scalar()
 
         if group_check != chore["group_id"]:
@@ -229,7 +243,7 @@ def duplicate_chore(
             "due_date": new_due_date,
             "is_recurring": new_recurrence is not None,
             "recurrence_pattern": new_recurrence,
-            "created_by": user["id"]
+            "created_by": user_id
         }).mappings().fetchone()
 
         new_chore_id = result["id"]
