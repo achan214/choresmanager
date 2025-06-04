@@ -1,37 +1,42 @@
-Performance Writeup
+# Performance Writeup
 
-1. Fake Data Modeling
-Data generation script: generate_fake_data.py
+---
 
-Final row counts:
+## 1. Fake Data Modeling
 
-groups: 10,001 rows
+**Data generation script:** [`generate_fake_data.py`](src/generate_fake_data.py)
 
-users: 100,000 rows
-
-chores: 500,000 rows
-
-assignments: 390,000 rows
+**Final row counts:**
+- **groups**: 10,001 rows  
+- **users**: 100,000 rows  
+- **chores**: 500,000 rows  
+- **assignments**: 390,000 rows  
 
 We chose this distribution because each group typically contains multiple users, and each user is expected to have several chores. With 10,000+ groups and 100,000 users, we expect our service to support large apartment complexes or universities with shared living arrangements. The volume of 500,000 chores and 390,000 assignments mimics the workload of long-term, daily-use behavior over time (e.g., daily, weekly, recurring tasks). This level of scaling ensures that we can simulate real production-like load and observe performance under high usage.
 
-2. Endpoint Performance Results
+---
+
+## 2. Endpoint Performance Results
+
 Each endpoint was tested using Swagger UI after generating the data. Results below are execution times (in milliseconds):
 
-Endpoint	Execution Time (ms)
-POST /chores/	51 ms
-POST /chores/assign-balanced	64 ms
-POST /chores/reminders/send	103 ms (slowest)
-PATCH /chores/{chore_id}/archive	31 ms
-POST /chores/{chore_id}/duplicate	59 ms
+| Endpoint                                  | Execution Time (ms) |
+|-------------------------------------------|----------------------|
+| `POST /chores/`                           | 51 ms                |
+| `POST /chores/assign-balanced`            | 64 ms                |
+| `POST /chores/reminders/send`             | **103 ms (slowest)** |
+| `PATCH /chores/{chore_id}/archive`        | 31 ms                |
+| `POST /chores/{chore_id}/duplicate`       | 59 ms                 |
 
-Slowest Endpoint: POST /chores/reminders/send
+**Slowest Endpoint:** `POST /chores/reminders/send`
 
-3. Performance Tuning
-Original EXPLAIN ANALYZE
-sql
-Copy
-Edit
+---
+
+## 3. Performance Tuning
+
+### Original `EXPLAIN ANALYZE`
+
+```sql
 SELECT u.id as user_id, u.username, c.id as chore_id, c.name, c.due_date
 FROM chores c
 JOIN assignments a ON c.id = a.chore_id
@@ -41,6 +46,7 @@ WHERE g.group_name = 'Room101'
   AND c.completed = false
   AND c.archived = false
   AND c.due_date BETWEEN NOW() AND NOW() + INTERVAL '48 hours';
+
 Before Indexing:
 
 Execution time: ~93.5–95.3 ms
