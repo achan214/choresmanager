@@ -13,7 +13,7 @@ def get_api_key(api_key: str = Depends(api_key_header)):
         raise HTTPException(status_code=403, detail="Invalid or missing API Key")
     return api_key
 
-def get_current_user(x_user_id: str = Header(..., alias="X-User-Id")):
+def get_current_user(x_user_id: str = Header(..., alias="User-Id")):
     try:
         user_id = int(x_user_id)
     except ValueError:
@@ -34,7 +34,7 @@ def get_current_user(x_user_id: str = Header(..., alias="X-User-Id")):
 
         return dict(result)
 
-def get_username(username: str = Header(..., alias="X-Username")):
+def get_username(username: str = Header(..., alias="Username")):
     if not username:
-        raise HTTPException(status_code=400, detail="Missing X-Username header")
+        raise HTTPException(status_code=400, detail="Missing Username header")
     return username
